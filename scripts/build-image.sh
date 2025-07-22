@@ -27,9 +27,12 @@ EOF
 }
 
 cleanup() {
-  trap - SIGINT SIGTERM ERR EXIT
-
-  # script cleanup here
+  local exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    echo "❌ [CLEANUP] Завершення з помилкою (exit code $exit_code)"
+  else
+    echo "✅ [CLEANUP] Успішне завершення"
+  fi
 }
 
 setup_colors() {
@@ -51,19 +54,21 @@ die() {
   exit "$code"
 }
 
+  # default values of variables set from params
+push=false
+all=false
+cnb=false
+multi_arch=false
+quiet=false
+builder='nil'
+repository=''
+tag='latest'
+service='*'
+expected_ref=''
+actions_cache=false
+
 parse_params() {
   # default values of variables set from params
-  push=false
-  all=false
-  cnb=false
-  multi_arch=false
-  quiet=false
-  builder='nil'
-  repository=''
-  tag='latest'
-  service='*'
-  expected_ref=''
-  actions_cache=false
 
   while :; do
     case "${1-}" in
@@ -108,16 +113,17 @@ parse_params() {
 parse_params "$@"
 setup_colors
 
-quiet_args='-q'
+push="${push:-false}"
+echo "DEBUG: push=$push"
 
-if [ "$push" = true ] ; then
+quiet_args='-q'
+if [ "$push" = true ]; then
   quiet_args='-q'
 fi
 
 function build()
 {
   component=$1
-
   component_dir="$script_dir/../src/$component"
 
   msg "Building component ${GREEN}$component${NOFORMAT}..."
@@ -157,11 +163,12 @@ function build()
     fi
 
     msg "Running pack build..."
+    echo "==> pack build command:"
+    echo "pack $quiet_args --no-color build $image_name:build --builder $builder --path $component_dir --tag $ref-cnb $pack_args"
     pack $quiet_args --no-color build $image_name:build --builder $builder --path $component_dir --tag "$ref-cnb" $pack_args
 
     if [ "$push" = true ] ; then
       msg "Pushing image for ${GREEN}$component${NOFORMAT}..."
-
       docker push -q "$ref-cnb"
     fi
   fi
@@ -182,12 +189,24 @@ function build()
       cache_args="--cache-from type=gha,scope=${component} --cache-to type=gha,scope=${component},mode=max"
     fi
 
+    echo "==> Variables before buildx:"
+    echo "  component_dir=$component_dir"
+    echo "  dockerfile=$dockerfile"
+    echo "  ref=$ref"
+    echo "  push_args=$push_args"
+    echo "  cache_args=$cache_args"
+    echo "  docker_build_args=$docker_build_args"
+
     if [ "$multi_arch" = true ] || [ "$all" = true ]; then
       msg "Building multi-arch..."
-      docker buildx build --progress plain $cache_args $push_args --platform linux/amd64,linux/arm64 -f "$component_dir/$dockerfile" $docker_build_args -t $ref $component_dir
+      echo "==> docker buildx command:"
+      echo "docker buildx build --progress plain $cache_args $push_args --platform linux/amd64,linux/arm64 -f $component_dir/$dockerfile $docker_build_args -t $ref $component_dir"
+      docker buildx build --progress plain $cache_args $push_args --platform linux/amd64,linux/arm64 -f "$component_dir/$dockerfile" $docker_build_args -t "$ref" "$component_dir"
     else
       msg "Building local arch..."
-      docker buildx build --progress plain $cache_args $push_args -f "$component_dir/$dockerfile" $docker_build_args -t $ref $component_dir
+      echo "==> docker buildx command:"
+      echo "docker buildx build --progress plain $cache_args $push_args -f $component_dir/$dockerfile $docker_build_args -t $ref $component_dir"
+      docker buildx build --progress plain $cache_args $push_args -f "$component_dir/$dockerfile" $docker_build_args -t "$ref" "$component_dir"
     fi
   fi
 
