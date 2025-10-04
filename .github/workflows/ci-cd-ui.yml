@@ -1,0 +1,58 @@
+name: CI/CD Frontend to S3
+
+on:
+    push:
+        branches:
+            - main
+            - dev
+        paths:
+            - "client/**"
+            - ".github/workflows/ci-cd-frontend.yml"
+
+env:
+    AWS_REGION: eu-central-1
+    S3_BUCKET: from-nav-to-dev-default
+    REACT_APP_API_URL: https://api.vh.gzttk.org
+
+jobs:
+    build-deploy-frontend:
+        name: Build and Deploy React Frontend
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+
+            - name: Install dependencies
+              working-directory: ./client
+              run: npm install
+
+            - name: Build frontend
+              working-directory: ./client
+              run: |
+                  echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env.production
+                  export NODE_OPTIONS=--openssl-legacy-provider
+                  npm run build
+
+            - name: Deploy to S3
+              uses: aws-actions/configure-aws-credentials@v3
+              with:
+                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  aws-region: ${{ env.AWS_REGION }}
+
+            - name: Upload to S3
+              run: |
+                  aws s3 sync ./client/build s3://${{ env.S3_BUCKET }} --delete
+
+            # Optional: invalidate CloudFront cache
+            # - name: Invalidate CloudFront
+            #   run: |
+            #     aws cloudfront create-invalidation \
+            #       --distribution-id ${{ secrets.CLOUDFRONT_DIST_ID }} \
+            #       --paths "/*"
