@@ -37,22 +37,26 @@ jobs:
               run: |
                   chmod +x ./scripts/build-image.sh
 
-                  ECR_REPO="${{ steps.login-ecr.outputs.registry }}"
+                  ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
                   SHA_TAG="${{ github.sha }}"
                   LATEST_TAG="latest"
+                  IMAGE_NAME="retail-store-sample-catalog"
 
-                  echo "Building and pushing image..."
+                  echo "🛠️ Building and pushing image..."
                   ./scripts/build-image.sh \
                     --service catalog \
-                    --repository $ECR_REPO \
+                    --repository $ECR_REGISTRY \
                     --tag $SHA_TAG \
                     --push
 
-                  echo "Tagging image as 'latest' ..."
-                  docker pull $ECR_REPO:$SHA_TAG
-                  docker tag $ECR_REPO:$SHA_TAG $ECR_REPO:$LATEST_TAG
-                  docker push $ECR_REPO:$LATEST_TAG
+                  echo "🔁 Logging in to ECR again..."
+                  aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-                  echo "Image pushed:"
-                  echo " - $ECR_REPO:$SHA_TAG"
-                  echo " - $ECR_REPO:$LATEST_TAG"
+                  echo "🔁 Tagging image as 'latest' ..."
+                  docker pull $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG
+                  docker tag $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG $ECR_REGISTRY/$IMAGE_NAME:$LATEST_TAG
+                  docker push $ECR_REGISTRY/$IMAGE_NAME:$LATEST_TAG
+
+                  echo "✅ Image pushed:"
+                  echo " - $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG"
+                  echo " - $ECR_REGISTRY/$IMAGE_NAME:$LATEST_TAG"
