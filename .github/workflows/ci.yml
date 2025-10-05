@@ -38,22 +38,22 @@ jobs:
                   chmod +x ./scripts/build-image.sh
 
                   ECR_REPO="${{ steps.login-ecr.outputs.registry }}"
-                  SERVICE_NAME="catalog"
+                  SERVICE_NAME="retail-store-sample-catalog"
                   SHA_TAG="${{ github.sha }}"
                   LATEST_TAG="latest"
 
-                  echo "🛠️ Building image for $SERVICE_NAME ..."
+                  echo " Building image for $SERVICE_NAME ..."
                   ./scripts/build-image.sh \
                     --service $SERVICE_NAME \
                     --repository $ECR_REPO \
                     --tag $SHA_TAG \
                     --push
 
-                  echo "🔁 Tagging image as 'latest' ..."
+                  echo " Tagging image as 'latest' ..."
                   docker pull $ECR_REPO/$SERVICE_NAME:$SHA_TAG
                   docker tag $ECR_REPO/$SERVICE_NAME:$SHA_TAG $ECR_REPO/$SERVICE_NAME:$LATEST_TAG
                   docker push $ECR_REPO/$SERVICE_NAME:$LATEST_TAG
 
-                  echo "✅ Image pushed:"
+                  echo " Image pushed:"
                   echo " - $ECR_REPO/$SERVICE_NAME:$SHA_TAG"
                   echo " - $ECR_REPO/$SERVICE_NAME:$LATEST_TAG"
