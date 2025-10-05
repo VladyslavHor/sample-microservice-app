@@ -39,24 +39,26 @@ jobs:
 
                   ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
                   SHA_TAG="${{ github.sha }}"
-                  LATEST_TAG="latest"
                   IMAGE_NAME="retail-store-sample-catalog"
 
-                  echo "🛠️ Building and pushing image..."
+                  echo "Building and pushing image..."
                   ./scripts/build-image.sh \
                     --service catalog \
                     --repository $ECR_REGISTRY \
                     --tag $SHA_TAG \
                     --push
 
-                  echo "🔁 Logging in to ECR again..."
-                  aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+                    # If we're on main branch, also tag as 'latest'
+                  if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+                    echo "Tagging image as 'latest' ..."
+                    aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+                    docker pull $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG
+                    docker tag $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG $ECR_REGISTRY/$IMAGE_NAME:latest
+                    docker push $ECR_REGISTRY/$IMAGE_NAME:latest
+                  else
+                    echo "Not main branch — skipping 'latest' tag"
+                  fi
 
-                  echo "🔁 Tagging image as 'latest' ..."
-                  docker pull $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG
-                  docker tag $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG $ECR_REGISTRY/$IMAGE_NAME:$LATEST_TAG
-                  docker push $ECR_REGISTRY/$IMAGE_NAME:$LATEST_TAG
-
-                  echo "✅ Image pushed:"
+                  echo "Image pushed:"
                   echo " - $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG"
-                  echo " - $ECR_REGISTRY/$IMAGE_NAME:$LATEST_TAG"
+                  [[ "${{ github.ref }}" == "refs/heads/main" ]] && echo " - $ECR_REGISTRY/$IMAGE_NAME:latest" || true
