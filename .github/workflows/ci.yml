@@ -2,9 +2,9 @@ name: CI Backend Services
 
 on:
     push:
-        branches: ["main", "dev"]
+        branches: ["master", "dev"]
     pull_request:
-        branches: ["main", "dev"]
+        branches: ["master", "dev"]
     workflow_dispatch:
 
 jobs:
@@ -48,17 +48,17 @@ jobs:
                     --tag $SHA_TAG \
                     --push
 
-                    # If we're on main branch, also tag as 'latest'
-                  if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+                    # If we're on 'master' branch, also tag as 'latest'
+                  if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
                     echo "Tagging image as 'latest' ..."
                     aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
                     docker pull $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG
                     docker tag $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG $ECR_REGISTRY/$IMAGE_NAME:latest
                     docker push $ECR_REGISTRY/$IMAGE_NAME:latest
                   else
-                    echo "Not main branch — skipping 'latest' tag"
+                    echo "Not master branch — skipping 'latest' tag"
                   fi
 
                   echo "Image pushed:"
                   echo " - $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG"
-                  [[ "${{ github.ref }}" == "refs/heads/main" ]] && echo " - $ECR_REGISTRY/$IMAGE_NAME:latest" || true
+                  [[ "${{ github.ref }}" == "refs/heads/master" ]] && echo " - $ECR_REGISTRY/$IMAGE_NAME:latest" || true
