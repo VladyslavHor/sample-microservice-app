@@ -37,7 +37,7 @@ jobs:
               run: |
                   chmod +x ./scripts/build-image.sh
 
-                  ECR_REPO="${{ steps.login-ecr.outputs.registry }}/retail-store-sample-catalog"
+                  ECR_REPO="${{ steps.login-ecr.outputs.registry }}"
                   SHA_TAG="${{ github.sha }}"
                   LATEST_TAG="latest"
 
