@@ -8,9 +8,12 @@ on:
     workflow_dispatch:
 
 jobs:
-    build-catalog:
-        name: Build catalog service
+    build-backend:
+        name: Build & Push ${{ matrix.service }} image
         runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                service: [cart, catalog, orders, checkout, assets]
 
         permissions:
             id-token: write # for OIDC
@@ -39,11 +42,11 @@ jobs:
 
                   ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
                   SHA_TAG="${{ github.sha }}"
-                  IMAGE_NAME="retail-store-sample-catalog"
+                  IMAGE_NAME="retail-store-sample-${{ matrix.service }}"
 
-                  echo "Building and pushing image..."
+                  echo "Building and pushing ${{ matrix.service }} image..."
                   ./scripts/build-image.sh \
-                    --service catalog \
+                    --service "${{ matrix.service }}" \
                     --repository $ECR_REGISTRY \
                     --tag $SHA_TAG \
                     --push
