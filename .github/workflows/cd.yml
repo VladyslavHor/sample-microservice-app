@@ -19,7 +19,7 @@ on:
 
 env:
     AWS_REGION: eu-central-1
-    ECS_CLUSTER: my-ecs-cluster
+    ECS_CLUSTER: microservice-infra-default
     SERVICES: '["cart","catalog","orders","checkout","assets"]'
 
 jobs:
