@@ -9,9 +9,18 @@ on:
     workflow_dispatch:
         inputs:
             service:
-                description: "all" # deploy all services, or specify one: cart, catalog, orders, checkout, assets
+                description: "Specify service to deploy (cart, catalog, orders, checkout, assets, or all)"
                 required: false
                 default: "all"
+
+    push:
+        branches:
+            - dev
+
+env:
+    AWS_REGION: eu-central-1
+    ECS_CLUSTER: my-ecs-cluster
+    SERVICES: '["cart","catalog","orders","checkout","assets"]'
 
 jobs:
     deploy:
@@ -28,6 +37,9 @@ jobs:
                 github.event.inputs.service == 'all' ||
                 contains(fromJson('["cart","catalog","orders","checkout","assets"]'), github.event.inputs.service)
               )
+            ) || (
+              github.event_name == 'push' &&
+              github.ref == 'refs/heads/dev'
             )
 
         strategy:
@@ -46,27 +58,38 @@ jobs:
               uses: aws-actions/configure-aws-credentials@v4
               with:
                   role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-                  aws-region: eu-central-1
+                  aws-region: ${{ env.AWS_REGION }}
 
             - name: Login to Amazon ECR
               id: login-ecr
               uses: aws-actions/amazon-ecr-login@v2
 
             - name: Conditional deploy check
-              if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.service != 'all' && matrix.service != github.event.inputs.service }}
+              if: >
+                  github.event_name == 'workflow_dispatch' &&
+                  github.event.inputs.service != 'all' &&
+                  matrix.service != github.event.inputs.service
               run: echo "Skipping ${{ matrix.service }} (manual deploy for another service)"
 
             - name: Deploy to ECS
-              if: ${{ github.event_name == 'workflow_run' || github.event.inputs.service == 'all' || github.event.inputs.service == matrix.service }}
+              if: >
+                  github.event_name == 'workflow_run' ||
+                  github.event_name == 'push' ||
+                  github.event.inputs.service == 'all' ||
+                  github.event.inputs.service == matrix.service
               run: |
                   ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
                   IMAGE_NAME="retail-store-sample-${{ matrix.service }}"
+                  IMAGE_TAG="latest"
 
-                  echo "Pulling image $IMAGE_NAME:latest..."
-                  docker pull $ECR_REGISTRY/$IMAGE_NAME:latest
+                  if [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+                    IMAGE_TAG="dev"
+                  fi
 
-                  echo "Updating ECS service for $IMAGE_NAME..."
+                  echo "Deploying $IMAGE_NAME:$IMAGE_TAG to ECS..."
                   aws ecs update-service \
-                    --cluster my-ecs-cluster \
+                    --cluster ${{ env.ECS_CLUSTER }} \
                     --service ${{ matrix.service }} \
                     --force-new-deployment
+
+                  echo "$IMAGE_NAME:$IMAGE_TAG deployment triggered successfully"
