@@ -113,9 +113,11 @@ jobs:
               run: |
                   if [[ -n "${{ github.event.inputs.sha }}" ]]; then
                     echo "DEPLOY_SHA=${{ github.event.inputs.sha }}" >> $GITHUB_ENV
-                  else
+                    elif [[ -f ./sha-artifact/image_sha.txt ]]; then
                     DEPLOY_SHA=$(cat ./sha-artifact/image_sha.txt)
                     echo "DEPLOY_SHA=$DEPLOY_SHA" >> $GITHUB_ENV
+                  else
+                    echo "DEPLOY_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
                   fi
 
             - name: Deploy UI image to ECS
