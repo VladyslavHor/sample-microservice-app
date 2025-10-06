@@ -2,33 +2,22 @@ name: CI/CD Frontend (UI)
 
 on:
     push:
-        branches: ["master", "dev"]
+        branches:
+            - master
+            - dev
+        tags:
+            - "v[0-9]+.[0-9]+.[0-9]+"
     workflow_dispatch:
         inputs:
-            action:
-                description: "build or deploy"
-                required: true
-                default: "build"
-
-    workflow_run:
-        workflows: ["CI/CD Frontend (UI)"]
-        types:
-            - completed
-
-env:
-    AWS_REGION: eu-central-1
-    APP_NAME: retail-store-ui
-    ECR_REPO: retail-store-sample-ui
-    S3_BUCKET: retail-store-ui-bucket
-    CLOUDFRONT_DISTRIBUTION_ID: E2ABCDEFGHIJKL
+            sha:
+                description: "SHA для деплою (залишити пустим для останнього build)"
+                required: false
+                default: ""
 
 jobs:
-    build:
-        name: Build & Push UI Image
+    build-ui:
+        name: Build & Push UI image
         runs-on: ubuntu-latest
-        if: >
-            github.event_name == 'push' ||
-            (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'build')
 
         permissions:
             id-token: write
@@ -45,39 +34,58 @@ jobs:
               uses: aws-actions/configure-aws-credentials@v4
               with:
                   role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-                  aws-region: ${{ env.AWS_REGION }}
+                  aws-region: eu-central-1
 
             - name: Login to Amazon ECR
               id: login-ecr
               uses: aws-actions/amazon-ecr-login@v2
 
-            - name: Build & Push Docker image
+            - name: Build & Push UI image
               run: |
+                  chmod +x ./scripts/build-image.sh
+
                   ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
                   SHA_TAG="${{ github.sha }}"
-                  IMAGE_URI="$ECR_REGISTRY/${{ env.ECR_REPO }}:$SHA_TAG"
+                  IMAGE_NAME="retail-store-sample-ui"
 
-                  echo "Building and pushing image: $IMAGE_URI"
-                  docker build -t "$IMAGE_URI" ./ui
-                  docker push "$IMAGE_URI"
+                  echo "Building and pushing UI image..."
+                  ./scripts/build-image.sh \
+                    --service "ui" \
+                    --repository $ECR_REGISTRY \
+                    --tag $SHA_TAG \
+                    --push
 
-                  # If on master, tag as latest
                   if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
-                    docker tag "$IMAGE_URI" "$ECR_REGISTRY/${{ env.ECR_REPO }}:latest"
-                    docker push "$ECR_REGISTRY/${{ env.ECR_REPO }}:latest"
+                    echo "Tagging image as 'latest'..."
+                    aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+                    docker pull $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG
+                    docker tag $ECR_REGISTRY/$IMAGE_NAME:$SHA_TAG $ECR_REGISTRY/$IMAGE_NAME:latest
+                    docker push $ECR_REGISTRY/$IMAGE_NAME:latest
                   fi
 
-    deploy:
-        name: Deploy UI to S3 & CloudFront
+            - name: Save SHA for CD
+              if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
+              run: echo "${{ github.sha }}" > image_sha.txt
+
+            - name: Upload SHA artifact
+              if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
+              uses: actions/upload-artifact@v4
+              with:
+                  name: image-sha
+                  path: image_sha.txt
+
+    deploy-ui:
+        name: Deploy UI to ECS
         runs-on: ubuntu-latest
-        needs: build
-        if: >
-            (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
-            (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy')
+        needs: build-ui
 
         permissions:
             id-token: write
             contents: read
+
+        if: >
+            github.event_name == 'workflow_dispatch' ||
+            github.event_name == 'push'
 
         steps:
             - name: Checkout repository
@@ -87,23 +95,39 @@ jobs:
               uses: aws-actions/configure-aws-credentials@v4
               with:
                   role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-                  aws-region: ${{ env.AWS_REGION }}
+                  aws-region: eu-central-1
 
-            - name: Build frontend
-              run: |
-                  echo "Building production UI..."
-                  cd ui
-                  npm ci
-                  npm run build
+            - name: Login to Amazon ECR
+              id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v2
 
-            - name: Sync build to S3
-              run: |
-                  echo "Syncing UI build to S3..."
-                  aws s3 sync ui/dist s3://${{ env.S3_BUCKET }} --delete
+            - name: Download SHA artifact (manual deploy)
+              if: github.event_name == 'workflow_dispatch' && github.event.inputs.sha == ''
+              uses: actions/download-artifact@v4
+              with:
+                  name: image-sha
+                  path: ./sha-artifact
 
-            - name: Invalidate CloudFront cache
+            - name: Set deploy SHA
+              id: set-sha
               run: |
-                  echo "Invalidating CloudFront cache..."
-                  aws cloudfront create-invalidation \
-                    --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
-                    --paths "/*"
+                  if [[ -n "${{ github.event.inputs.sha }}" ]]; then
+                    echo "DEPLOY_SHA=${{ github.event.inputs.sha }}" >> $GITHUB_ENV
+                  else
+                    DEPLOY_SHA=$(cat ./sha-artifact/image_sha.txt)
+                    echo "DEPLOY_SHA=$DEPLOY_SHA" >> $GITHUB_ENV
+                  fi
+
+            - name: Deploy UI image to ECS
+              run: |
+                  ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+                  IMAGE_NAME="retail-store-sample-ui"
+                  ECS_CLUSTER="microservice-infra-default"
+                  ECS_SERVICE="ui-service-svc"
+
+                  echo "Deploying $IMAGE_NAME with SHA $DEPLOY_SHA to ECS service: $ECS_SERVICE"
+                  aws ecs update-service \
+                    --cluster "$ECS_CLUSTER" \
+                    --service "$ECS_SERVICE" \
+                    --force-new-deployment \
+                    --image "$ECR_REGISTRY/$IMAGE_NAME:$DEPLOY_SHA"
