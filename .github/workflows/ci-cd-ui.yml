@@ -1,58 +1,109 @@
-name: CI/CD Frontend to S3
+name: CI/CD Frontend (UI)
 
 on:
     push:
-        branches:
-            - main
-            - dev
-        paths:
-            - "client/**"
-            - ".github/workflows/ci-cd-frontend.yml"
+        branches: ["master", "dev"]
+    workflow_dispatch:
+        inputs:
+            action:
+                description: "build or deploy"
+                required: true
+                default: "build"
+
+    workflow_run:
+        workflows: ["CI/CD Frontend (UI)"]
+        types:
+            - completed
 
 env:
     AWS_REGION: eu-central-1
-    S3_BUCKET: from-nav-to-dev-default
-    REACT_APP_API_URL: https://api.vh.gzttk.org
+    APP_NAME: retail-store-ui
+    ECR_REPO: retail-store-sample-ui
+    S3_BUCKET: retail-store-ui-bucket
+    CLOUDFRONT_DISTRIBUTION_ID: E2ABCDEFGHIJKL
 
 jobs:
-    build-deploy-frontend:
-        name: Build and Deploy React Frontend
+    build:
+        name: Build & Push UI Image
         runs-on: ubuntu-latest
+        if: >
+            github.event_name == 'push' ||
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'build')
+
+        permissions:
+            id-token: write
+            contents: read
 
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
 
-            - name: Set up Node.js
-              uses: actions/setup-node@v4
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v4
               with:
-                  node-version: 20
-
-            - name: Install dependencies
-              working-directory: ./client
-              run: npm install
-
-            - name: Build frontend
-              working-directory: ./client
-              run: |
-                  echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env.production
-                  export NODE_OPTIONS=--openssl-legacy-provider
-                  npm run build
-
-            - name: Deploy to S3
-              uses: aws-actions/configure-aws-credentials@v3
-              with:
-                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
                   aws-region: ${{ env.AWS_REGION }}
 
-            - name: Upload to S3
-              run: |
-                  aws s3 sync ./client/build s3://${{ env.S3_BUCKET }} --delete
+            - name: Login to Amazon ECR
+              id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v2
 
-            # Optional: invalidate CloudFront cache
-            # - name: Invalidate CloudFront
-            #   run: |
-            #     aws cloudfront create-invalidation \
-            #       --distribution-id ${{ secrets.CLOUDFRONT_DIST_ID }} \
-            #       --paths "/*"
+            - name: Build & Push Docker image
+              run: |
+                  ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+                  SHA_TAG="${{ github.sha }}"
+                  IMAGE_URI="$ECR_REGISTRY/${{ env.ECR_REPO }}:$SHA_TAG"
+
+                  echo "Building and pushing image: $IMAGE_URI"
+                  docker build -t "$IMAGE_URI" ./ui
+                  docker push "$IMAGE_URI"
+
+                  # If on master, tag as latest
+                  if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+                    docker tag "$IMAGE_URI" "$ECR_REGISTRY/${{ env.ECR_REPO }}:latest"
+                    docker push "$ECR_REGISTRY/${{ env.ECR_REPO }}:latest"
+                  fi
+
+    deploy:
+        name: Deploy UI to S3 & CloudFront
+        runs-on: ubuntu-latest
+        needs: build
+        if: >
+            (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy')
+
+        permissions:
+            id-token: write
+            contents: read
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+                  aws-region: ${{ env.AWS_REGION }}
+
+            - name: Build frontend
+              run: |
+                  echo "Building production UI..."
+                  cd ui
+                  npm ci
+                  npm run build
+
+            - name: Sync build to S3
+              run: |
+                  echo "Syncing UI build to S3..."
+                  aws s3 sync ui/dist s3://${{ env.S3_BUCKET }} --delete
+
+            - name: Invalidate CloudFront cache
+              run: |
+                  echo "Invalidating CloudFront cache..."
+                  aws cloudfront create-invalidation \
+                    --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+                    --paths "/*"
