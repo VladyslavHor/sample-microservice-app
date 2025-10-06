@@ -129,6 +129,7 @@ jobs:
                   IMAGE="$ECR_REGISTRY/retail-store-sample-ui:$DEPLOY_SHA"
                   ECS_CLUSTER="microservice-infra-default"
                   ECS_SERVICE="ui-service-svc"
+                  TASK_DEFINITION_NAME="ui-task"
                   TASK_DEF_JSON=$(mktemp)
 
                   echo "Generating new task definition with image $IMAGE..."
