@@ -10,7 +10,7 @@ on:
     workflow_dispatch:
         inputs:
             sha:
-                description: "SHA для деплою (залишити пустим для останнього build)"
+                description: "SHA to deploy (leave blank for 'last' build)"
                 required: false
                 default: ""
 
@@ -112,24 +112,43 @@ jobs:
               id: set-sha
               run: |
                   if [[ -n "${{ github.event.inputs.sha }}" ]]; then
+                    # Use SHA, provided as input
                     echo "DEPLOY_SHA=${{ github.event.inputs.sha }}" >> $GITHUB_ENV
-                    elif [[ -f ./sha-artifact/image_sha.txt ]]; then
+                  elif [[ -f ./sha-artifact/image_sha.txt ]]; then
+                    # Take SHA from artifact last CI
                     DEPLOY_SHA=$(cat ./sha-artifact/image_sha.txt)
                     echo "DEPLOY_SHA=$DEPLOY_SHA" >> $GITHUB_ENV
                   else
+                    # Fallback: take SHA from current commit
                     echo "DEPLOY_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
                   fi
 
             - name: Deploy UI image to ECS
               run: |
                   ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-                  IMAGE_NAME="retail-store-sample-ui"
+                  IMAGE="$ECR_REGISTRY/retail-store-sample-ui:$DEPLOY_SHA"
                   ECS_CLUSTER="microservice-infra-default"
                   ECS_SERVICE="ui-service-svc"
+                  TASK_DEF_JSON=$(mktemp)
 
-                  echo "Deploying $IMAGE_NAME with SHA $DEPLOY_SHA to ECS service: $ECS_SERVICE"
+                  echo "Generating new task definition with image $IMAGE..."
+                  aws ecs describe-task-definition \
+                    --task-definition $ECS_SERVICE \
+                    --query 'taskDefinition' > $TASK_DEF_JSON
+
+                  # Update container image and remove read-only fields
+                  jq ".containerDefinitions[0].image=\"$IMAGE\" |
+                      del(.status, .revision, .taskDefinitionArn, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)" \
+                      $TASK_DEF_JSON > "${TASK_DEF_JSON}.new"
+
+                  NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+                    --cli-input-json file://${TASK_DEF_JSON}.new \
+                    --query 'taskDefinition.taskDefinitionArn' \
+                    --output text)
+
+                  echo "Deploying UI service with new task definition $NEW_TASK_DEF_ARN..."
                   aws ecs update-service \
-                    --cluster "$ECS_CLUSTER" \
-                    --service "$ECS_SERVICE" \
-                    --force-new-deployment \
-                    --image "$ECR_REGISTRY/$IMAGE_NAME:$DEPLOY_SHA"
+                    --cluster $ECS_CLUSTER \
+                    --service $ECS_SERVICE \
+                    --task-definition $NEW_TASK_DEF_ARN \
+                    --force-new-deployment
