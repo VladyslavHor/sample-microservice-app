@@ -1,5 +1,5 @@
 # Build Stage
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023 as build-env
+FROM amazonlinux:2023 AS build-env
 
 # We tell DNF not to install Recommends and Suggests packages, which are
 # weak dependencies in DNF terminology, thus keeping our installed set of
@@ -22,7 +22,7 @@ ENV GOPROXY=direct
 RUN go build -o main $MAIN_PATH
 
 # Final stage
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+FROM amazonlinux:2023
 
 ENV APPUSER=appuser
 ENV APPUID=1000

@@ -1,0 +1,66 @@
+name: CD Backend Services
+
+on:
+    workflow_run:
+        workflows: ["CI Backend Services"]
+        types:
+            - completed
+
+    push:
+        branches:
+            - master
+            - dev
+
+    workflow_dispatch:
+        inputs:
+            service:
+                description: "service name to deploy or 'all' (all, cart, catalog, orders, checkout, assets)"
+                required: false
+                default: "all"
+
+jobs:
+    deploy:
+        name: Deploy backend services
+        runs-on: ubuntu-latest
+
+        strategy:
+            matrix:
+                service: [cart, catalog, orders, checkout, assets]
+
+        permissions:
+            id-token: write
+            contents: read
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+                  aws-region: eu-central-1
+
+            - name: Login to Amazon ECR
+              id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v2
+
+            - name: Conditional deploy check
+              if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.service != 'all' && matrix.service != github.event.inputs.service }}
+              run: echo "Passing ${{ matrix.service }} — manual deploy for other service, skipping..."
+
+            - name: Deploy to ECS
+              if: ${{ github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' && (github.event.inputs.service == 'all' || github.event.inputs.service == matrix.service) || github.event_name == 'push' }}
+
+              run: |
+                  ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+                  IMAGE_NAME="retail-store-sample-${{ matrix.service }}"
+                  ECS_CLUSTER="microservice-infra-default"
+                  ECS_SERVICE="${{ matrix.service }}-service-svc"
+
+                  echo "Deploying $IMAGE_NAME to ECS service: $ECS_SERVICE"
+
+                  aws ecs update-service \
+                    --cluster "$ECS_CLUSTER" \
+                    --service "$ECS_SERVICE" \
+                    --force-new-deployment

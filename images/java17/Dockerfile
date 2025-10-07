@@ -1,5 +1,5 @@
 # Build Stage
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023 as build-env
+FROM amazonlinux:2023 AS build-env
 
 # We tell DNF not to install Recommends and Suggests packages, keeping our
 # installed set of packages as minimal as possible.
@@ -27,7 +27,7 @@ RUN ./mvnw -DskipTests package -q && \
     mv /$JAR_PATH /app.jar
 
 # Package Stage
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+FROM amazonlinux:2023
 
 # We tell DNF not to install Recommends and Suggests packages, which are
 # weak dependencies in DNF terminology, thus keeping our installed set of
